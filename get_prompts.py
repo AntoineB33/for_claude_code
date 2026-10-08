@@ -1,8 +1,9 @@
+import hashlib
 import json
 import os
-import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
-from datetime import datetime
+
 
 def extract_and_sort_prompts(project_dir, output_txt, history_json):
     target_path = Path(project_dir)
@@ -13,7 +14,7 @@ def extract_and_sort_prompts(project_dir, output_txt, history_json):
         try:
             with open(history_json, 'r', encoding='utf-8') as f:
                 history = json.load(f)
-        except Exception as e:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
             print(f"Warning: Could not load history file. Starting fresh. Error: {e}")
 
     # 2. Check all files, looking specifically for jsonl data
@@ -41,11 +42,26 @@ def extract_and_sort_prompts(project_dir, output_txt, history_json):
                             msg_obj_time = data.get('message', {})
                             raw_time = msg_obj_time.get('created_at') or msg_obj_time.get('timestamp')
                             
-                        is_user = data.get('type') == 'user'
                         msg_obj = data.get('message', {})
                         
-                        if is_user or msg_obj.get('role') == 'user':
-                            content = msg_obj.get('content', '')
+                        is_nested_user = data.get('type') == 'user' or msg_obj.get('role') == 'user'
+                        is_flat_user = data.get('role') == 'user'
+                        
+                        if is_nested_user or is_flat_user:
+                            # --- NEW: Ignore automated background tasks and system-injected messages ---
+                            if data.get('promptSource') == 'system' or data.get('turnOrigin') == 'task_notification':
+                                continue
+                            
+                            if is_flat_user:
+                                content = data.get('content', '')
+                            else:
+                                content = msg_obj.get('content', '')
+                                
+                            # Secondary fallback check: skip if it's clearly an XML system notification
+                            if isinstance(content, str) and content.strip().startswith('<task-notification>'):
+                                continue
+                            # --------------------------------------------------------------------------
+
                             text_content = ""
                             
                             if isinstance(content, str):
@@ -100,7 +116,7 @@ def extract_and_sort_prompts(project_dir, output_txt, history_json):
             
             # If no exact timestamp was in the JSON, fallback to formatting the file's modified time
             if not time_display:
-                time_display = datetime.fromtimestamp(prompt['mtime']).strftime('%Y-%m-%d %H:%M:%S') + " (File Modified)"
+                time_display = datetime.fromtimestamp(prompt['mtime'], tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S') + " (File Modified)"
                 
             f.write(f"========== PROMPT {i+1} | {time_display} ==========\n")
             f.write(prompt['text'])
