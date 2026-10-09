@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -124,12 +125,49 @@ def extract_and_sort_prompts(project_dir, output_txt, history_json):
 
     print(f"Successfully tracked/extracted {len(all_prompts)} total prompts to {output_txt}")
 
+# Each Claude Code project gets its own folder under projects/, holding a
+# run.bat (refreshes only that project) and its extracted_prompts.txt.
+# The folder name is the Claude project name, which is how the bat finds it.
+PROJECT_BAT = r"""@echo off
+cd /d "%~dp0"
+for %%I in (.) do set "PROJECT=%%~nxI"
+uv run "..\..\get_prompts.py" "%PROJECT%" || pause
+"""
+
+
+def process_project(name):
+    source_dir = CLAUDE_PROJECTS_DIR / name
+    if not source_dir.is_dir():
+        print(f"Error: The directory {source_dir} does not exist.")
+        return False
+
+    out_dir = OUTPUT_ROOT / name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    HISTORY_ROOT.mkdir(parents=True, exist_ok=True)
+
+    bat_path = out_dir / "run.bat"
+    if not bat_path.exists():
+        with open(bat_path, 'w', encoding='ascii', newline='\r\n') as f:
+            f.write(PROJECT_BAT)
+
+    extract_and_sort_prompts(source_dir, out_dir / "extracted_prompts.txt", HISTORY_ROOT / f"{name}.json")
+    return True
+
+
 if __name__ == "__main__":
-    TARGET_DIR = r"C:\Users\antoi\.claude\projects\C--Users-antoi-Documents-Home-code-kotlin-OmniApp"
-    OUTPUT_FILE = "extracted_prompts.txt"
-    HISTORY_FILE = "prompts_history.json"
-    
-    if os.path.exists(TARGET_DIR):
-        extract_and_sort_prompts(TARGET_DIR, OUTPUT_FILE, HISTORY_FILE)
-    else:
-        print(f"Error: The directory {TARGET_DIR} does not exist.")
+    SCRIPT_DIR = Path(__file__).resolve().parent
+    CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+    OUTPUT_ROOT = SCRIPT_DIR / "projects"
+    HISTORY_ROOT = SCRIPT_DIR / "history"
+
+    # With project names as arguments, only those are refreshed; otherwise all of them
+    names = sys.argv[1:]
+    if not names:
+        if not CLAUDE_PROJECTS_DIR.is_dir():
+            print(f"Error: The directory {CLAUDE_PROJECTS_DIR} does not exist.")
+            sys.exit(1)
+        names = sorted(d.name for d in CLAUDE_PROJECTS_DIR.iterdir() if d.is_dir())
+
+    results = [process_project(name) for name in names]
+    if not all(results):
+        sys.exit(1)
