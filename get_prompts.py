@@ -15,8 +15,13 @@ def extract_and_sort_prompts(project_dir, output_txt, history_json):
         try:
             with open(history_json, 'r', encoding='utf-8') as f:
                 history = json.load(f)
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
-            print(f"Warning: Could not load history file. Starting fresh. Error: {e}")
+            if not isinstance(history, dict):
+                raise ValueError("history is not a JSON object")
+        except (OSError, ValueError) as e:
+            # Never start fresh here: the history may hold prompts whose source files
+            # are gone, and continuing would overwrite it with only what is left on disk
+            print(f"Error: Could not load history file {history_json}. Nothing was written. Error: {e}")
+            return False
 
     # 2. Check all files, looking specifically for jsonl data
     for filepath in target_path.rglob('*'):
@@ -107,8 +112,13 @@ def extract_and_sort_prompts(project_dir, output_txt, history_json):
     all_prompts.sort(key=sort_key, reverse=True)
 
     # 4. Save the updated history database so we remember them next time
-    with open(history_json, 'w', encoding='utf-8') as f:
+    # Write to a temp file then swap it in, so an interrupted run can't leave a truncated history
+    history_tmp = f"{history_json}.tmp"
+    with open(history_tmp, 'w', encoding='utf-8') as f:
         json.dump(history, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(history_tmp, history_json)
 
     # 5. Write the extracted prompts to the human-readable text file
     with open(output_txt, 'w', encoding='utf-8') as f:
@@ -124,6 +134,7 @@ def extract_and_sort_prompts(project_dir, output_txt, history_json):
             f.write("\n\n")
 
     print(f"Successfully tracked/extracted {len(all_prompts)} total prompts to {output_txt}")
+    return True
 
 # Each Claude Code project gets its own folder under projects/, holding a
 # run.bat (refreshes only that project) and its extracted_prompts.txt.
@@ -150,8 +161,7 @@ def process_project(name):
         with open(bat_path, 'w', encoding='ascii', newline='\r\n') as f:
             f.write(PROJECT_BAT)
 
-    extract_and_sort_prompts(source_dir, out_dir / "extracted_prompts.txt", HISTORY_ROOT / f"{name}.json")
-    return True
+    return extract_and_sort_prompts(source_dir, out_dir / "extracted_prompts.txt", HISTORY_ROOT / f"{name}.json")
 
 
 if __name__ == "__main__":
