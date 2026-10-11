@@ -57,7 +57,13 @@ def extract_and_sort_prompts(project_dir, output_txt, history_json):
                             # --- NEW: Ignore automated background tasks and system-injected messages ---
                             if data.get('promptSource') == 'system' or data.get('turnOrigin') == 'task_notification':
                                 continue
-                            
+
+                            # Ignore the summary Claude Code writes when it compacts a conversation.
+                            # Also drop it from the history, where earlier runs recorded it as a prompt
+                            if data.get('isCompactSummary'):
+                                history.pop(data.get('uuid') or msg_obj.get('uuid'), None)
+                                continue
+
                             if is_flat_user:
                                 content = data.get('content', '')
                             else:
